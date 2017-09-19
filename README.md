@@ -29,5 +29,4 @@ Then to incorporate into your code, install using
 ```
 python setup.py install
 ```
-and have your code instantiate an instance of
-`mnist_arithmetic.MnistArithmeticDataset`.
+and have your code instantiate the class `mnist_arithmetic.MnistArithmeticDataset`.
