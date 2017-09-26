@@ -306,11 +306,13 @@ class MnistArithmeticDataset(PatchesDataset):
     data_path: str
         Directory containing data. Assumes there is a sub-directory
         called `emnist/emnist-byclass' inside it.
-    reductions: dict (str -> function)
-        A dictionary mapping from characters to reduction functions. For each image,
-        one of these operations will be randomly sampled.
     n_examples: int
         Number of input-output pairs to create.
+    reductions: dict (str -> function) or single function
+        If a dict, then it should map from characters to reduction functions.
+        For each image, one of these operations will be randomly sampled.
+        Otherwise, should be a single reduction function, and no operation symbol
+        will be added to the images.
     min_digits: int (> 0)
         Minimum number of digits in each image.
     max_digits: int (> 0)
@@ -327,7 +329,7 @@ class MnistArithmeticDataset(PatchesDataset):
 
     """
     def __init__(
-            self, data_path, reductions, n_examples, min_digits=1,
+            self, data_path, n_examples, reductions, min_digits=1,
             max_digits=1, base=10, downsample_factor=1, image_width=100, max_overlap=200):
 
         data_path = Path(data_path).expanduser()
@@ -335,23 +337,27 @@ class MnistArithmeticDataset(PatchesDataset):
         self.min_digits = min_digits
         self.max_digits = max_digits
 
-        self.X, self.Y, self.class_map = load_emnist(
+        self.X, self.Y, _ = load_emnist(
             data_path, [str(i) for i in range(base)],
             downsample_factor=downsample_factor)
 
         s = int(np.sqrt(self.X.shape[1]))
         self.X = self.X.reshape(-1, s, s)
 
-        self.eX, self.eY, op_class_map = load_emnist(
-            data_path, list(reductions.keys()),
-            downsample_factor=downsample_factor)
+        if isinstance(reductions, dict):
+            self.sample_op = True
+            self.eX, self.eY, op_class_map = load_emnist(
+                data_path, list(reductions.keys()),
+                downsample_factor=downsample_factor)
 
-        s = int(np.sqrt(self.eX.shape[1]))
-        self.eX = self.eX.reshape(-1, s, s)
-        self.class_map.update(op_class_map)
-
-        self._remapped_reductions = {
-            self.class_map[k]: v for k, v in reductions.items()}
+            s = int(np.sqrt(self.eX.shape[1]))
+            self.eX = self.eX.reshape(-1, s, s)
+            self._remapped_reductions = {op_class_map[k]: v for k, v in reductions.items()}
+        else:
+            assert callable(reductions)
+            self.func = reductions
+            self.sample_op = False
+            self.eX = self.eY = None
 
         super(MnistArithmeticDataset, self).__init__(n_examples, image_width, max_overlap)
 
@@ -362,23 +368,23 @@ class MnistArithmeticDataset(PatchesDataset):
 
     def _sample_patches(self):
         n = np.random.randint(self.min_digits, self.max_digits+1)
-        symbol_idx = np.random.randint(0, self.eY.shape[0])
-        symbol_class = self.eY[symbol_idx, 0]
-        func = self._remapped_reductions[symbol_class]
         digit_indices = np.random.randint(0, self.Y.shape[0], n)
-        images = [self.eX[symbol_idx]] + [self.X[i] for i in digit_indices]
+        images = [self.X[i] for i in digit_indices]
+
+        if self.sample_op:
+            symbol_idx = np.random.randint(0, self.eY.shape[0])
+            images.insert(0, self.eX[symbol_idx])
+            symbol_class = self.eY[symbol_idx, 0]
+            func = self._remapped_reductions[symbol_class]
+        else:
+            func = self.func
+
         y = func([self.Y[i] for i in digit_indices])
+
         return images, y
 
 
-if __name__ == "__main__":
-    reductions = {
-        'A': lambda x: sum(x),
-        'M': lambda x: np.product(x),
-        'C': lambda x: len(x),
-        'X': lambda x: max(x),
-        'N': lambda x: min(x)
-    }
+def test(reductions):
     n_examples = 20
     min_digits = 1
     max_digits = 3
@@ -391,11 +397,24 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     dataset = MnistArithmeticDataset(
-        args.path, reductions, n_examples, min_digits=min_digits, max_digits=max_digits,
+        args.path, n_examples, reductions, min_digits=min_digits, max_digits=max_digits,
         base=base, image_width=image_width, max_overlap=max_overlap)
 
     batch_x, batch_y = dataset.next_batch()
 
     for x, y in zip(batch_x, batch_y):
-        print("\nCorrect answer is: {}".format(y))
+        print("\nCorrect answer is: {}".format(y[0]))
         print(image_to_string(x))
+
+
+if __name__ == "__main__":
+    reductions = {
+        'A': lambda x: sum(x),
+        'M': lambda x: np.product(x),
+        'C': lambda x: len(x),
+        'X': lambda x: max(x),
+        'N': lambda x: min(x)
+    }
+    test(reductions)
+
+    test(sum)
