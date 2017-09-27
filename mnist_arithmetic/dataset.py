@@ -9,47 +9,8 @@ import numpy as np
 from download import image_to_string
 
 
-def view_emnist(x, y, n):
-    m = int(np.ceil(np.sqrt(n)))
-    fig, subplots = plt.subplots(m, m)
-    s = int(np.sqrt(x.shape[1]))
-    for i, s in enumerate(subplots.flatten()):
-        s.imshow(x[i, :].reshape(s, s).transpose())
-        s.set_title(str(y[i, 0]))
-
-
-def idx_to_char(i):
-    assert isinstance(i, int)
-    if i >= 72:
-        raise Exception()
-    elif i >= 36:
-        char = chr(i-36+ord('a'))
-    elif i >= 10:
-        char = chr(i-10+ord('A'))
-    elif i >= 0:
-        char = str(i)
-    else:
-        raise Exception()
-    return char
-
-
-def char_to_idx(c):
-    assert isinstance(c, str)
-    assert len(c) == 1
-
-    if c.isupper():
-        idx = ord(c) - ord('A') + 10
-    elif c.islower():
-        idx = ord(c) - ord('A') + 36
-    elif c.isnumeric():
-        idx = int(c)
-    else:
-        raise Exception()
-    return idx
-
-
 def load_emnist(
-        path, classes, balance=False, include_blank=False, downsample_factor=None):
+        path, classes, balance=False, include_blank=False, downsample_factor=None, one_hot=False, max_examples=None):
     """ Load emnist data from disk by class.
 
     Elements of `classes` pick out which emnist classes to load, but different labels
@@ -61,8 +22,8 @@ def load_emnist(
     ----------
     path: str
         Path to 'emnist-byclass' directory.
-    classes: list of character
-        Each integer is a character specifying the class to load.
+    classes: list of character from the set (0-9, A-Z, a-z)
+        Each character is the name of a class to load.
     balance: boolean
         If True, will ensure that all classes are balanced by removing elements
         from classes that are larger than the minimu-size class.
@@ -72,6 +33,10 @@ def load_emnist(
         The emnist digits are stored as 28x28. With downsample_factor=2, the
         images are returned as 14x14, with downsample_factor=4 the images are returned
         as 7x7.
+    one_hot: bool
+        If True, labels are one-hot vectors instead of integers.
+    max_examples: int
+        Maximum number of examples returned. If not supplied, return all available data.
 
     """
     emnist_dir = Path(path) / 'emnist/emnist-byclass'
@@ -102,7 +67,7 @@ def load_emnist(
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
         y = np.concatenate((y, blank_idx * np.ones((class_count, 1))), axis=0)
-        blank_symbol = 62
+        blank_symbol = ' '
         class_map[blank_symbol] = blank_idx
         classes.append(blank_symbol)
 
@@ -121,6 +86,15 @@ def load_emnist(
             keep_y.append(y[keep_indices, :])
         x = np.concatenate(keep_x, 0)
         y = np.concatenate(keep_y, 0)
+
+    if max_examples is not None:
+        x = x[:max_examples]
+        y = y[:max_examples]
+
+    if one_hot:
+        _y = np.zeros((y.shape[0], len(classes)))
+        _y[np.arange(y.shape[0]), y.flatten()] = 1.0
+        y = _y
 
     return x, y, class_map
 

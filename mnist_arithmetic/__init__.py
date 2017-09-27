@@ -1,1 +1,1 @@
-from .dataset import MnistArithmeticDataset
+from .dataset import MnistArithmeticDataset, load_emnist
