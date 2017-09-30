@@ -66,7 +66,7 @@ def load_emnist(
         blanks = np.zeros((class_count, x.shape[1]))
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
-        y = np.concatenate((y, blank_idx * np.ones((class_count, 1))), axis=0)
+        y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
         blank_symbol = ' '
         class_map[blank_symbol] = blank_idx
         classes.append(blank_symbol)
@@ -92,7 +92,7 @@ def load_emnist(
         y = y[:max_examples]
 
     if one_hot:
-        _y = np.zeros((y.shape[0], len(classes)))
+        _y = np.zeros((y.shape[0], len(classes))).astype('f')
         _y[np.arange(y.shape[0]), y.flatten()] = 1.0
         y = _y
 
