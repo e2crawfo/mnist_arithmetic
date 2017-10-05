@@ -3,7 +3,6 @@ import dill
 import gzip
 import argparse
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 from download import image_to_string
@@ -103,14 +102,20 @@ class Rect(object):
     def __init__(self, x, y, w, h):
         self.left = x
         self.right = x+w
-        self.top = y+h
-        self.bottom = y
+        self.top = y
+        self.bottom = y+h
 
     def intersects(self, r2):
         r1 = self
         h_overlaps = (r1.left <= r2.right) and (r1.right >= r2.left)
-        v_overlaps = (r1.bottom <= r2.top) and (r1.top >= r2.bottom)
+        v_overlaps = (r1.top <= r2.bottom) and (r1.bottom >= r2.top)
         return h_overlaps and v_overlaps
+
+    def centre(self):
+        return (
+            self.top + (self.bottom - self.top) / 2.,
+            self.left + (self.right - self.left) / 2.
+        )
 
     def __str__(self):
         return "<%d:%d %d:%d>" % (self.left, self.right, self.top, self.bottom)
@@ -209,7 +214,7 @@ class PatchesDataset(RegressionDataset):
         self.image_width = image_width
         self.max_overlap = max_overlap
 
-        x, y = self._make_dataset(n_examples)
+        x, y, self.patch_centres = self._make_dataset(n_examples)
         super(PatchesDataset, self).__init__(x, y, **kwargs)
 
     def _sample_patches(self):
@@ -221,6 +226,7 @@ class PatchesDataset(RegressionDataset):
             return np.zeros((0, image_width, image_width)).astype('f'), np.zeros((0, 1)).astype('i')
 
         new_X, new_Y = [], []
+        patch_centres = []
 
         for j in range(n_examples):
             images, y = self._sample_patches()
@@ -238,7 +244,7 @@ class PatchesDataset(RegressionDataset):
                 area = np.zeros((image_width, image_width), 'f')
 
                 for rect in rects:
-                    area[rect.left:rect.right, rect.bottom:rect.top] += 1
+                    area[rect.top:rect.bottom, rect.left:rect.right] += 1
 
                 if (area >= 2).sum() < max_overlap:
                     break
@@ -251,19 +257,22 @@ class PatchesDataset(RegressionDataset):
                         "(n_rects: {}, image_width: {}, max_overlap: {})".format(
                             n_rects, image_width, max_overlap))
 
+            patch_centres.append([r.centre() for r in rects])
+
             # Populate rectangles
             o = np.zeros((image_width, image_width), 'f')
             for image, rect in zip(images, rects):
-                o[rect.left:rect.right, rect.bottom:rect.top] += image
+                o[rect.top:rect.bottom, rect.left:rect.right] += image
 
             new_X.append(np.uint8(255*np.minimum(o, 1)))
             new_Y.append(y)
 
         new_X = np.array(new_X).astype('f')
         new_Y = np.array(new_Y).astype('i').reshape(-1, 1)
-        return new_X, new_Y
+        return new_X, new_Y, patch_centres
 
     def visualize(self, n=9):
+        import matplotlib.pyplot as plt
         m = int(np.ceil(np.sqrt(n)))
         fig, subplots = plt.subplots(m, m)
         size = int(np.sqrt(self.x.shape[1]))
@@ -358,13 +367,107 @@ class MnistArithmeticDataset(PatchesDataset):
         return images, y
 
 
-def test(reductions):
-    n_examples = 20
-    min_digits = 1
-    max_digits = 3
-    base = 10
-    image_width = 100
-    max_overlap = 200
+class MnistSalienceDataset(PatchesDataset):
+    """ A dataset for detecting salience.
+
+    Parameters
+    ----------
+    data_path: str
+        Directory containing data. Assumes there is a sub-directory
+        called `emnist/emnist-byclass' inside it.
+    n_examples: int
+        Number of input-output pairs to create.
+    min_digits: int (> 0)
+        Minimum number of digits in each image.
+    max_digits: int (> 0)
+        Maximum number of digits in each image.
+    downsample_factor: int
+        Factor to shrink the component emnist images by.
+    image_width: int
+        Width in pixels of the input images.
+    max_overlap: int
+        Maximum number of pixels that are permitted to be occupied by two separate emnist images.
+        Setting to higher values allows more digits to be packed into an image of a fixed size.
+    output_width: int
+        Width in pixels of the output images.
+    std: float > 0
+        Standard deviation of the salience bumps.
+    flatten_output: bool
+        If True, output ``labels`` are flattened.
+
+    """
+    def __init__(
+            self, data_path, n_examples, classes=None, min_digits=1, max_digits=1,
+            downsample_factor=2, image_width=42, max_overlap=1, output_width=14, std=0.1,
+            flatten_output=False):
+        if not classes:
+            classes = list(range(10))
+
+        data_path = Path(data_path).expanduser()
+
+        self.min_digits = min_digits
+        self.max_digits = max_digits
+
+        self.output_width = output_width
+        self.std = std
+
+        self.X, self.Y, _ = load_emnist(
+            data_path, classes, downsample_factor=downsample_factor)
+
+        s = int(np.sqrt(self.X.shape[1]))
+        self.X = self.X.reshape(-1, s, s)
+
+        super(MnistSalienceDataset, self).__init__(n_examples, image_width, max_overlap)
+
+        y = []
+
+        for x, pc in zip(self.x, self.patch_centres):
+            _y = gaussian_kernel(output_width, (pc[0][0]/image_width, pc[0][1]/image_width), std)
+            for centre in pc[1:]:
+                _y += gaussian_kernel(
+                    output_width, (centre[0]/image_width, centre[1]/image_width), std)
+            _y /= len(pc)
+            y.append(_y)
+
+        y = np.array(y)
+        if flatten_output:
+            y = y.reshape(y.shape[0], -1)
+        self.y = y
+
+        del self.X
+        del self.Y
+
+    def _sample_patches(self):
+        n = np.random.randint(self.min_digits, self.max_digits+1)
+        indices = np.random.randint(0, self.Y.shape[0], n)
+        images = [self.X[i] for i in indices]
+        y = 0
+        return images, y
+
+    def visualize(self, n=9):
+        import matplotlib.pyplot as plt
+        m = int(np.ceil(np.sqrt(n)))
+        fig, axes = plt.subplots(m, 2 * m)
+        for i, s in enumerate(axes[:, :m].flatten()):
+            s.imshow(self.x[i, :].reshape(self.image_width, self.image_width))
+        for i, s in enumerate(axes[:, m:].flatten()):
+            s.imshow(self.y[i, :].reshape(self.output_width, self.output_width))
+
+
+def gaussian_kernel(width, mu, std):
+    """ creates gaussian kernel with side length l and a sigma of sig """
+    ax = (np.arange(width) + 0.5) / width
+    xx, yy = np.meshgrid(ax, ax)
+
+    kernel = np.exp(-((xx - mu[1])**2 + (yy - mu[0])**2) / (2. * std**2))
+
+    return kernel
+
+
+def test(
+        reductions, downsample_factor=1, n_examples=20,
+        min_digits=1, max_digits=3, base=10, image_width=100,
+        max_overlap=200):
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--path', type=str, default='.')
@@ -372,7 +475,7 @@ def test(reductions):
 
     dataset = MnistArithmeticDataset(
         args.path, n_examples, reductions, min_digits=min_digits, max_digits=max_digits,
-        base=base, image_width=image_width, max_overlap=max_overlap)
+        base=base, image_width=image_width, max_overlap=max_overlap, downsample_factor=downsample_factor)
 
     batch_x, batch_y = dataset.next_batch()
 
@@ -381,14 +484,36 @@ def test(reductions):
         print(image_to_string(x))
 
 
+def test_salience(
+        downsample_factor=2, n_examples=20,
+        min_digits=2, max_digits=3, image_width=40,
+        max_overlap=1):
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--path', type=str, default='.')
+    args = parser.parse_args()
+
+    dataset = MnistSalienceDataset(
+        args.path, n_examples, [0, 1, 2], min_digits=min_digits,
+        max_digits=max_digits, image_width=image_width,
+        max_overlap=max_overlap, downsample_factor=downsample_factor,
+        std=0.05, output_width=20)
+
+    batch_x, batch_y = dataset.next_batch()
+
+    for x, y in zip(batch_x, batch_y):
+        print(image_to_string(y))
+        print(image_to_string(x))
+
+
 if __name__ == "__main__":
     reductions = {
-        'A': lambda x: sum(x),
-        'M': lambda x: np.product(x),
-        'C': lambda x: len(x),
-        'X': lambda x: max(x),
-        'N': lambda x: min(x)
+        'A': sum,
+        'M': np.product,
+        'C': len,
+        'X': max,
+        'N': min,
     }
-    test(reductions)
-
-    test(sum)
+    test(reductions, downsample_factor=2, image_width=40, max_overlap=10)
+    test(sum, downsample_factor=2, image_width=40, max_overlap=10)
+    test_salience()
