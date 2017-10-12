@@ -44,8 +44,6 @@ def load_emnist(
     x = []
     class_map = {}
     for i, cls in enumerate(sorted(list(classes))):
-        # print("Loading emnist class {}...".format(cls))
-
         with gzip.open(str(emnist_dir / (str(cls) + '.pklz')), 'rb') as f:
             _x = dill.load(f)
             n_examples = _x.shape[0]
@@ -54,7 +52,8 @@ def load_emnist(
                 _x = _x.reshape((-1, s, s))
                 _x = _x[:, ::downsample_factor, ::downsample_factor]
                 _x = _x.reshape((n_examples, -1))
-            x.append(_x)
+
+            x.append(np.float32(np.uint8(255*np.minimum(_x, 1))))
             y.extend([i] * x[-1].shape[0])
         class_map[cls] = i
     x = np.concatenate(x, axis=0)
@@ -260,11 +259,12 @@ class PatchesDataset(RegressionDataset):
             patch_centres.append([r.centre() for r in rects])
 
             # Populate rectangles
-            o = np.zeros((image_width, image_width), 'f')
+            x = np.zeros((image_width, image_width), 'f')
             for image, rect in zip(images, rects):
-                o[rect.top:rect.bottom, rect.left:rect.right] += image
+                patch = x[rect.top:rect.bottom, rect.left:rect.right]
+                x[rect.top:rect.bottom, rect.left:rect.right] = np.maximum(image, patch)
 
-            new_X.append(np.uint8(255*np.minimum(o, 1)))
+            new_X.append(x)
             new_Y.append(y)
 
         new_X = np.array(new_X).astype('f')

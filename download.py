@@ -105,7 +105,7 @@ def process_data(path):
     x = x.astype('f') / 255.0
 
     for i in sorted(set(y.flatten())):
-        keep = train_y == i
+        keep = y == i
         x_i = x[keep.flatten(), :]
         if i >= 36:
             char = chr(i-36+ord('a'))
