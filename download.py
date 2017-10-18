@@ -1,36 +1,16 @@
-import subprocess
 import shutil
 import numpy as np
 from scipy.io import loadmat
 import dill
 import gzip
-import zipfile
 from pathlib import Path
 import argparse
+import os
+import subprocess
+import zipfile
+from contextlib import suppress
 
-
-# Character used for ascii art, sorted in order of increasing sparsity
-ascii_art_chars = \
-    "$@B%8&WM#*oahkbdpqwmZO0QLCJUYXzcvunxrjft/\|()1{}[]?-_+~<>i!lI;:,\"^`'. "
-
-
-def char_map(value):
-    """ Maps a relative "sparsity" or "lightness" value in [0, 1) to a character. """
-    if value >= 1:
-        value = 1 - 1e-6
-    n_bins = len(ascii_art_chars)
-    bin_id = int(value * n_bins)
-    return ascii_art_chars[bin_id]
-
-
-def image_to_string(array):
-    """ Convert an image stored as an array to an ascii art string """
-    if array.ndim == 1:
-        array = array.reshape(-1, int(np.sqrt(array.shape[0])))
-    array = array / array.max()
-    image = [char_map(value) for value in array.flatten()]
-    image = np.reshape(image, array.shape)
-    return '\n'.join(''.join(c for c in row) for row in image)
+from mnist_arithmetic.utils import image_to_string
 
 
 emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
@@ -38,7 +18,7 @@ emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
 
 def maybe_download_emnist(path):
     """
-    Download the data if its not already in place.
+    Download the data if it is not already in place.
 
     Parameters
     ----------
@@ -47,23 +27,30 @@ def maybe_download_emnist(path):
 
     """
     path = Path(path).expanduser()
-    filename = path / 'emnist'
-    if not filename.exists():
+    emnist_path = path / 'emnist'
+    if not (emnist_path / 'emnist-byclass').exists():
         zip_filename = path / 'emnist.zip'
         if not zip_filename.exists():
             print("{} not found, downloading...".format(zip_filename))
             subprocess.run('wget -P {} {}'.format(path, emnist_url).split())
             shutil.move(str(path / 'matlab.zip'), str(path / 'emnist.zip'))
 
+        shutil.rmtree(str(path / 'matlab'), ignore_errors=True)
+        shutil.rmtree(str(emnist_path), ignore_errors=True)
+
         print("Extracting {}...".format(zip_filename))
         zip_ref = zipfile.ZipFile(str(zip_filename), 'r')
         zip_ref.extractall(str(path))
         zip_ref.close()
-        shutil.move(str(path / 'matlab'), str(path / 'emnist'))
+        shutil.move(str(path / 'matlab'), str(emnist_path))
+
+        os.remove(str(emnist_path / 'emnist-balanced.mat'))
+        os.remove(str(emnist_path / 'emnist-bymerge.mat'))
+        os.remove(str(emnist_path / 'emnist-digits.mat'))
+        os.remove(str(emnist_path / 'emnist-letters.mat'))
+        os.remove(str(emnist_path / 'emnist-mnist.mat'))
     else:
         print("Data found, skipping download.")
-
-    return filename
 
 
 def process_data(path):
@@ -79,12 +66,14 @@ def process_data(path):
         Path to directory where files should be stored.
 
     """
-    filename = 'emnist-byclass.mat'
-    emnist_path = maybe_download_emnist(path)
+    maybe_download_emnist(path)
+
+    path = Path(path)
 
     print("Processing...")
-    mat_path = emnist_path / filename
-    dir_name = mat_path.parent / mat_path.stem
+    emnist_path = path / 'emnist'
+    mat_path = emnist_path / 'emnist-byclass.mat'
+    dir_name = emnist_path / 'emnist-byclass'
     try:
         shutil.rmtree(str(dir_name))
     except FileNotFoundError:
@@ -120,6 +109,12 @@ def process_data(path):
         path_i = dir_name / (char + '.pklz')
         with gzip.open(str(path_i), 'wb') as f:
             dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
+
+    try:
+        os.remove(str(path / 'emnist.zip'))
+    except:
+        pass
+    os.remove(str(path / 'emnist/emnist-byclass.mat'))
 
     return x, y
 

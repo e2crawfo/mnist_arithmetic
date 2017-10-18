@@ -5,7 +5,7 @@ import argparse
 
 import numpy as np
 
-from download import image_to_string
+from mnist_arithmetic.utils import image_to_string
 
 
 def load_emnist(
