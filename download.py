@@ -8,7 +8,7 @@ import argparse
 import os
 import subprocess
 import zipfile
-from contextlib import suppress
+from contextlib import contextmanager
 
 from mnist_arithmetic.utils import image_to_string
 
@@ -53,7 +53,7 @@ def maybe_download_emnist(path):
         print("Data found, skipping download.")
 
 
-def process_data(path):
+def process_emnist(path):
     """
     Download emnist data if it hasn't already been downloaded. Do some
     post-processing to put it in a more useful format. End result is a directory
@@ -119,9 +119,55 @@ def process_data(path):
     return x, y
 
 
+@contextmanager
+def cd(path):
+    """ A context manager that changes into given directory on __enter__,
+        change back to original_file directory on exit. Exception safe.
+
+    """
+    path = str(path)
+    old_dir = os.getcwd()
+    os.chdir(path)
+
+    try:
+        yield
+    finally:
+        os.chdir(old_dir)
+
+
+def process_omniglot(dest):
+    try:
+        subprocess.run("git clone https://github.com/brendenlake/omniglot".split())
+        omniglot_dir = os.path.join(dest, 'omniglot')
+        os.makedirs(omniglot_dir, exist_ok=True)
+
+        with cd(os.path.join('omniglot/python')):
+            zip_ref = zipfile.ZipFile('images_evaluation.zip', 'r')
+            zip_ref.extractall('.')
+            zip_ref.close()
+
+            zip_ref = zipfile.ZipFile('images_background.zip', 'r')
+            zip_ref.extractall('.')
+            zip_ref.close()
+
+        subprocess.run('mv omniglot/python/images_background/* {}'.format(omniglot_dir), shell=True)
+        subprocess.run('mv omniglot/python/images_evaluation/* {}'.format(omniglot_dir), shell=True)
+    finally:
+        try:
+            shutil.rmtree('omniglot')
+        except:
+            pass
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--path', type=str, default='.')
+    parser.add_argument('kind', type=str, choices=['emnist', 'omniglot'])
+    parser.add_argument('path', type=str)
     args = parser.parse_args()
 
-    process_data(args.path)
+    if args.kind == 'emnist':
+        process_emnist(args.path)
+    elif args.kind == 'omniglot':
+        process_omniglot(args.path)
+    else:
+        raise Exception("NotImplemented")

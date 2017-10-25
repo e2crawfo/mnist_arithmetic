@@ -1,1 +1,1 @@
-from .dataset import MnistArithmeticDataset, MnistSalienceDataset, load_emnist
+from .dataset import MnistArithmeticDataset, MnistSalienceDataset, load_emnist, load_omniglot, omniglot_classes

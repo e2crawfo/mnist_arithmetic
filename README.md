@@ -16,7 +16,7 @@ Cohen, G., Afshar, S., Tapson, J., & van Schaik, A. (2017). EMNIST: an extension
 
 Download and preprocess EMNIST dataset:
 ```
-python download.py --path="<desired location>"
+python download.py emnist <desired location>
 ```
 
 Test the dataset:
