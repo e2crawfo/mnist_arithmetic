@@ -518,11 +518,11 @@ class MnistSalienceDataset(PatchesDataset):
         y = []
 
         for x, pc in zip(self.x, self.patch_centres):
-            _y = gaussian_kernel(output_width, (pc[0][0]/image_width, pc[0][1]/image_width), std)
-            for centre in pc[1:]:
+            _y = np.zeros((output_width, output_width))
+            for centre in pc:
                 _y += gaussian_kernel(
                     output_width, (centre[0]/image_width, centre[1]/image_width), std)
-            _y /= len(pc)
+            _y /= max(1, len(pc))
             y.append(_y)
 
         y = np.array(y)
