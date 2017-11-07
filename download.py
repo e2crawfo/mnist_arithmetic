@@ -60,6 +60,11 @@ def process_emnist(path):
     called `emnist-byclass` which contains a separate pklz file for each emnist
     class.
 
+    Pixel values of stored images are floating points values between 0 and 1.
+    Images for each class are put into a floating point numpy array with shape
+    (n_images_in_class, 28, 28). This numpy array is pickled and stored in a zip
+    file with name <class char>.pklz.
+
     Parameters
     ----------
     path: str
@@ -90,7 +95,7 @@ def process_emnist(path):
     x = np.concatenate((train_x, test_x), 0)
 
     # Give images the right orientation so that plt.imshow(x[0]) just works.
-    x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2).reshape(-1, 28**2)
+    x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2)
     x = x.astype('f') / 255.0
 
     for i in sorted(set(y.flatten())):
@@ -104,16 +109,12 @@ def process_emnist(path):
             char = str(i)
 
         print(char)
-        print(image_to_string(x_i[0, :]))
+        print(image_to_string(x_i[0, ...]))
 
         path_i = dir_name / (char + '.pklz')
         with gzip.open(str(path_i), 'wb') as f:
             dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
 
-    try:
-        os.remove(str(path / 'emnist.zip'))
-    except:
-        pass
     os.remove(str(path / 'emnist/emnist-byclass.mat'))
 
     return x, y

@@ -2,22 +2,58 @@ from pathlib import Path
 import dill
 import gzip
 import argparse
-import os
-import scipy
-
+from skimage.transform import resize
 import numpy as np
 
 from mnist_arithmetic.utils import image_to_string
 
 
+def convert_emnist_and_store(path, new_image_shape):
+    if new_image_shape == (28, 28):
+        raise Exception("Original shape of EMNIST is (28, 28).")
+
+    print("Converting (28, 28) EMNIST dataset to {}...".format(new_image_shape))
+
+    emnist_dir = Path(path) / 'emnist/emnist-byclass'
+    new_dir = Path(path) / 'emnist/emnist-byclass_{}_by_{}'.format(*new_image_shape)
+    new_dir.mkdir(exist_ok=False, parents=False)
+
+    classes = ''.join(
+        [str(i) for i in range(10)] +
+        [chr(i + ord('A')) for i in range(26)] +
+        [chr(i + ord('a')) for i in range(26)]
+    )
+
+    for i, cls in enumerate(sorted(classes)):
+        with gzip.open(str(emnist_dir / (str(cls) + '.pklz')), 'rb') as f:
+            _x = dill.load(f)
+
+            new_x = []
+            for img in _x:
+                img = resize(img, new_image_shape)
+                new_x.append(img)
+
+            print(cls)
+            print(image_to_string(_x[0]))
+            _x = np.array(new_x)
+            print(image_to_string(_x[0]))
+
+            path_i = new_dir / (cls + '.pklz')
+            with gzip.open(str(path_i), 'wb') as f:
+                dill.dump(_x, f, protocol=dill.HIGHEST_PROTOCOL)
+
+
 def load_emnist(
-        path, classes, balance=False, include_blank=False, downsample_factor=None, one_hot=False, max_examples=None):
+        path, classes, balance=False, include_blank=False, image_shape=None, one_hot=False, max_examples=None, show=False):
     """ Load emnist data from disk by class.
 
     Elements of `classes` pick out which emnist classes to load, but different labels
     end up getting returned because most classifiers require that the labels
     be in range(len(classes)). We return a dictionary `class_map` which maps from
     elements of `classes` down to range(len(classes)).
+
+    Pixel values of returned images are integers in the range 0-255, but stored as float32.
+    Returned X array has shape (n_images,) + image_shape.
 
     Parameters
     ----------
@@ -30,17 +66,24 @@ def load_emnist(
         from classes that are larger than the minimu-size class.
     include_blank: boolean
         If True, includes an additional class that consists of blank images.
-    downsample_factor: int
-        The emnist digits are stored as 28x28. With downsample_factor=2, the
-        images are returned as 14x14, with downsample_factor=4 the images are returned
-        as 7x7.
+    image_shape: (int, int)
+        Shape of the images.
     one_hot: bool
         If True, labels are one-hot vectors instead of integers.
     max_examples: int
         Maximum number of examples returned. If not supplied, return all available data.
+    show: bool
+        If True, prints out an image from each class.
 
     """
     emnist_dir = Path(path) / 'emnist/emnist-byclass'
+
+    if image_shape and image_shape != (28, 28):
+        emnist_dir = Path(path) / 'emnist/emnist-byclass_{}_by_{}'.format(*image_shape)
+
+        if not emnist_dir.exists():
+            convert_emnist_and_store(path, image_shape)
+
     classes = list(classes)[:]
     y = []
     x = []
@@ -48,15 +91,11 @@ def load_emnist(
     for i, cls in enumerate(sorted(list(classes))):
         with gzip.open(str(emnist_dir / (str(cls) + '.pklz')), 'rb') as f:
             _x = dill.load(f)
-            n_examples = _x.shape[0]
-            if downsample_factor is not None and downsample_factor > 1:
-                s = int(np.sqrt(_x.shape[-1]))
-                _x = _x.reshape((-1, s, s))
-                _x = _x[:, ::downsample_factor, ::downsample_factor]
-                _x = _x.reshape((n_examples, -1))
-
             x.append(np.float32(np.uint8(255*np.minimum(_x, 1))))
             y.extend([i] * x[-1].shape[0])
+        if show:
+            print(cls)
+            print(image_to_string(x[-1]))
         class_map[cls] = i
     x = np.concatenate(x, axis=0)
     y = np.array(y).reshape(-1, 1)
@@ -90,100 +129,6 @@ def load_emnist(
     if max_examples is not None:
         x = x[:max_examples]
         y = y[:max_examples]
-
-    if one_hot:
-        _y = np.zeros((y.shape[0], len(classes))).astype('f')
-        _y[np.arange(y.shape[0]), y.flatten()] = 1.0
-        y = _y
-
-    return x, y, class_map
-
-
-def omniglot_classes(path):
-    omniglot_dir = str(Path(path) / 'omniglot')
-    alphabets = os.listdir(omniglot_dir)
-    classes = []
-    for ab in alphabets:
-        n_characters = len(os.listdir(os.path.join(omniglot_dir, ab)))
-        classes.extend(["{},{}".format(ab, i+1) for i in range(n_characters)])
-    return classes
-
-
-# Class spec: alphabet,character
-def load_omniglot(
-        path, classes, include_blank=False, size=None, one_hot=False, indices=None):
-    """ Load omniglot data from disk by class.
-
-    Elements of `classes` pick out which omniglot classes to load, but different labels
-    end up getting returned because most classifiers require that the labels
-    be in range(len(classes)). We return a dictionary `class_map` which maps from
-    elements of `classes` down to range(len(classes)).
-
-    Parameters
-    ----------
-    path: str
-        Path to 'omniglot-byclass' directory.
-    classes: list of strings, each giving a class label
-        Each character is the name of a class to load.
-    balance: boolean
-        If True, will ensure that all classes are balanced by removing elements
-        from classes that are larger than the minimu-size class.
-    include_blank: boolean
-        If True, includes an additional class that consists of blank images.
-    downsample_factor: int
-        The omniglot digits are stored as 28x28. With downsample_factor=2, the
-        images are returned as 14x14, with downsample_factor=4 the images are returned
-        as 7x7.
-    one_hot: bool
-        If True, labels are one-hot vectors instead of integers.
-    indices: list of int
-        The image indices within the classes to include. For each class there are 20 images.
-
-    """
-    omniglot_dir = os.path.join(path, 'omniglot')
-    classes = list(classes)[:]
-    if not indices:
-        indices = list(range(20))
-    for idx in indices:
-        assert 0 <= idx < 20
-    y = []
-    x = []
-    class_map = {}
-    for i, cls in enumerate(sorted(list(classes))):
-        alphabet, character = cls.split(',')
-        char_dir = os.path.join(omniglot_dir, alphabet, "character{:02d}".format(int(character)))
-        files = os.listdir(char_dir)
-        class_id = files[0].split("_")[0]
-
-        for idx in indices:
-            f = os.path.join(char_dir, "{}_{:02d}.png".format(class_id, idx + 1))
-            _x = scipy.misc.imread(f)
-            _x = 255. - _x
-            if size:
-                _x = scipy.misc.imresize(_x, size)
-            print(image_to_string(_x))
-
-            x.append(np.float32(_x.flatten()))
-            y.append(i)
-        class_map[cls] = i
-
-    x = np.array(x)
-    y = np.array(y).reshape(-1, 1)
-
-    if include_blank:
-        class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count, x.shape[1]))
-        x = np.concatenate((x, blanks), axis=0)
-        blank_idx = len(class_map)
-        y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
-        blank_symbol = ' '
-        class_map[blank_symbol] = blank_idx
-        classes.append(blank_symbol)
-
-    order = np.random.permutation(x.shape[0])
-
-    x = x[order, :]
-    y = y[order, :]
 
     if one_hot:
         _y = np.zeros((y.shape[0], len(classes))).astype('f')
@@ -398,8 +343,8 @@ class MnistArithmeticDataset(PatchesDataset):
         Maximum number of digits in each image.
     base: int (<= 10, > 0)
         Base of digits that appear in image (e.g. if `base == 2`, only digits 0 and 1 appear).
-    downsample_factor: int
-        Factor to shrink the component emnist images by.
+    image_shape: int
+        Size of EMNIST images.
     image_width: int
         Width in pixels of the images.
     max_overlap: int
@@ -409,7 +354,7 @@ class MnistArithmeticDataset(PatchesDataset):
     """
     def __init__(
             self, data_path, n_examples, reductions, min_digits=1,
-            max_digits=1, base=10, downsample_factor=1, image_width=100, max_overlap=200):
+            max_digits=1, base=10, image_shape=None, image_width=100, max_overlap=200):
 
         data_path = Path(data_path).expanduser()
 
@@ -417,20 +362,13 @@ class MnistArithmeticDataset(PatchesDataset):
         self.max_digits = max_digits
 
         self.X, self.Y, _ = load_emnist(
-            data_path, [str(i) for i in range(base)],
-            downsample_factor=downsample_factor)
-
-        s = int(np.sqrt(self.X.shape[1]))
-        self.X = self.X.reshape(-1, s, s)
+            data_path, [str(i) for i in range(base)], image_shape=image_shape)
 
         if isinstance(reductions, dict):
             self.sample_op = True
             self.eX, self.eY, op_class_map = load_emnist(
-                data_path, list(reductions.keys()),
-                downsample_factor=downsample_factor)
+                data_path, list(reductions.keys()), image_shape=image_shape)
 
-            s = int(np.sqrt(self.eX.shape[1]))
-            self.eX = self.eX.reshape(-1, s, s)
             self._remapped_reductions = {op_class_map[k]: v for k, v in reductions.items()}
         else:
             assert callable(reductions)
@@ -477,8 +415,8 @@ class MnistSalienceDataset(PatchesDataset):
         Minimum number of digits in each image.
     max_digits: int (> 0)
         Maximum number of digits in each image.
-    downsample_factor: int
-        Factor to shrink the component emnist images by.
+    image_shape: (int, int)
+        Shape of images.
     image_width: int
         Width in pixels of the input images.
     max_overlap: int
@@ -490,12 +428,14 @@ class MnistSalienceDataset(PatchesDataset):
         Standard deviation of the salience bumps.
     flatten_output: bool
         If True, output ``labels`` are flattened.
+    point: bool
+        If True, salience represented by single pixel rather than a gaussian.
 
     """
     def __init__(
             self, data_path, n_examples, classes=None, min_digits=1, max_digits=1,
-            downsample_factor=2, image_width=42, max_overlap=1, output_width=14, std=0.1,
-            flatten_output=False):
+            image_shape=None, image_width=42, max_overlap=1, output_width=14, std=0.1,
+            flatten_output=False, point=False):
         if not classes:
             classes = list(range(10))
 
@@ -507,11 +447,7 @@ class MnistSalienceDataset(PatchesDataset):
         self.output_width = output_width
         self.std = std
 
-        self.X, self.Y, _ = load_emnist(
-            data_path, classes, downsample_factor=downsample_factor)
-
-        s = int(np.sqrt(self.X.shape[1]))
-        self.X = self.X.reshape(-1, s, s)
+        self.X, self.Y, _ = load_emnist(data_path, classes, image_shape=image_shape)
 
         super(MnistSalienceDataset, self).__init__(n_examples, image_width, max_overlap)
 
@@ -520,9 +456,13 @@ class MnistSalienceDataset(PatchesDataset):
         for x, pc in zip(self.x, self.patch_centres):
             _y = np.zeros((output_width, output_width))
             for centre in pc:
-                _y += gaussian_kernel(
-                    output_width, (centre[0]/image_width, centre[1]/image_width), std)
-            _y /= max(1, len(pc))
+                if point:
+                    pixel_y = int(output_width * centre[0] / image_width)
+                    pixel_x = int(output_width * centre[1] / image_width)
+                    _y[pixel_y, pixel_x] = 1.0
+                else:
+                    _y = np.maximum(_y, gaussian_kernel(
+                        output_width, (centre[0]/image_width, centre[1]/image_width), std))
             y.append(_y)
 
         y = np.array(y)
@@ -561,7 +501,7 @@ def gaussian_kernel(width, mu, std):
 
 
 def test(
-        reductions, downsample_factor=1, n_examples=20,
+        reductions, image_shape=(28, 28), n_examples=20,
         min_digits=1, max_digits=3, base=10, image_width=100,
         max_overlap=200):
 
@@ -571,7 +511,7 @@ def test(
 
     dataset = MnistArithmeticDataset(
         args.path, n_examples, reductions, min_digits=min_digits, max_digits=max_digits,
-        base=base, image_width=image_width, max_overlap=max_overlap, downsample_factor=downsample_factor)
+        base=base, image_width=image_width, max_overlap=max_overlap, image_shape=image_shape)
 
     batch_x, batch_y = dataset.next_batch()
 
@@ -581,7 +521,7 @@ def test(
 
 
 def test_salience(
-        downsample_factor=2, n_examples=20,
+        image_shape=(14, 14), n_examples=20,
         min_digits=2, max_digits=3, image_width=40,
         max_overlap=1):
 
@@ -592,7 +532,7 @@ def test_salience(
     dataset = MnistSalienceDataset(
         args.path, n_examples, [0, 1, 2], min_digits=min_digits,
         max_digits=max_digits, image_width=image_width,
-        max_overlap=max_overlap, downsample_factor=downsample_factor,
+        max_overlap=max_overlap, image_shape=image_shape,
         std=0.05, output_width=20)
 
     batch_x, batch_y = dataset.next_batch()
@@ -610,6 +550,6 @@ if __name__ == "__main__":
         'X': max,
         'N': min,
     }
-    test(reductions, downsample_factor=2, image_width=40, max_overlap=10)
-    test(sum, downsample_factor=2, image_width=40, max_overlap=10)
+    test(reductions, image_shape=(14, 14), image_width=100, max_overlap=10)
+    test(sum, image_shape=(14, 14), image_width=40, max_overlap=10)
     test_salience()
