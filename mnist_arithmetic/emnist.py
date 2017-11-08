@@ -44,7 +44,8 @@ def convert_emnist_and_store(path, new_image_shape):
 
 
 def load_emnist(
-        path, classes, balance=False, include_blank=False, image_shape=None, one_hot=False, max_examples=None, show=False):
+        path, classes, balance=False, include_blank=False,
+        shape=None, one_hot=False, max_examples=None, show=False):
     """ Load emnist data from disk by class.
 
     Elements of `classes` pick out which emnist classes to load, but different labels
@@ -53,7 +54,7 @@ def load_emnist(
     elements of `classes` down to range(len(classes)).
 
     Pixel values of returned images are integers in the range 0-255, but stored as float32.
-    Returned X array has shape (n_images,) + image_shape.
+    Returned X array has shape (n_images,) + shape.
 
     Parameters
     ----------
@@ -66,7 +67,7 @@ def load_emnist(
         from classes that are larger than the minimu-size class.
     include_blank: boolean
         If True, includes an additional class that consists of blank images.
-    image_shape: (int, int)
+    shape: (int, int)
         Shape of the images.
     one_hot: bool
         If True, labels are one-hot vectors instead of integers.
@@ -78,11 +79,11 @@ def load_emnist(
     """
     emnist_dir = Path(path) / 'emnist/emnist-byclass'
 
-    if image_shape and image_shape != (28, 28):
-        emnist_dir = Path(path) / 'emnist/emnist-byclass_{}_by_{}'.format(*image_shape)
+    if shape and shape != (28, 28):
+        emnist_dir = Path(path) / 'emnist/emnist-byclass_{}_by_{}'.format(*shape)
 
         if not emnist_dir.exists():
-            convert_emnist_and_store(path, image_shape)
+            convert_emnist_and_store(path, shape)
 
     classes = list(classes)[:]
     y = []
@@ -139,11 +140,11 @@ def load_emnist(
 
 
 class Rect(object):
-    def __init__(self, x, y, w, h):
-        self.left = x
-        self.right = x+w
+    def __init__(self, y, x, h, w):
         self.top = y
         self.bottom = y+h
+        self.left = x
+        self.right = x+w
 
     def intersects(self, r2):
         r1 = self
@@ -158,7 +159,7 @@ class Rect(object):
         )
 
     def __str__(self):
-        return "<%d:%d %d:%d>" % (self.left, self.right, self.top, self.bottom)
+        return "<%d:%d %d:%d>" % (self.top, self.bottom, self.left, self.right)
 
 
 class RegressionDataset(object):
@@ -250,8 +251,8 @@ class RegressionDataset(object):
 
 
 class PatchesDataset(RegressionDataset):
-    def __init__(self, n_examples, image_width, max_overlap, **kwargs):
-        self.image_width = image_width
+    def __init__(self, n_examples, image_shape, max_overlap, **kwargs):
+        self.image_shape = image_shape
         self.max_overlap = max_overlap
 
         x, y, self.patch_centres = self._make_dataset(n_examples)
@@ -261,27 +262,27 @@ class PatchesDataset(RegressionDataset):
         raise Exception("AbstractMethod")
 
     def _make_dataset(self, n_examples):
-        max_overlap, image_width = self.max_overlap, self.image_width
+        max_overlap, image_shape = self.max_overlap, self.image_shape
         if n_examples == 0:
-            return np.zeros((0, image_width, image_width)).astype('f'), np.zeros((0, 1)).astype('i')
+            return np.zeros((0,) + self.image_shape).astype('f'), np.zeros((0, 1)).astype('i')
 
         new_X, new_Y = [], []
         patch_centres = []
 
         for j in range(n_examples):
-            images, y = self._sample_patches()
-            image_shapes = [img.shape for img in images]
+            sub_images, y = self._sample_patches()
+            sub_image_shapes = [img.shape for img in sub_images]
 
             # Sample rectangles
-            n_rects = len(images)
+            n_rects = len(sub_images)
             i = 0
             while True:
                 rects = [
                     Rect(
-                        np.random.randint(0, image_width-m+1),
-                        np.random.randint(0, image_width-n+1), m, n)
-                    for m, n in image_shapes]
-                area = np.zeros((image_width, image_width), 'f')
+                        np.random.randint(0, image_shape[0]-m+1),
+                        np.random.randint(0, image_shape[1]-n+1), m, n)
+                    for m, n in sub_image_shapes]
+                area = np.zeros(image_shape, 'f')
 
                 for rect in rects:
                     area[rect.top:rect.bottom, rect.left:rect.right] += 1
@@ -294,14 +295,14 @@ class PatchesDataset(RegressionDataset):
                 if i > 1000:
                     raise Exception(
                         "Could not fit rectangles. "
-                        "(n_rects: {}, image_width: {}, max_overlap: {})".format(
-                            n_rects, image_width, max_overlap))
+                        "(n_rects: {}, image_shape: {}, max_overlap: {})".format(
+                            n_rects, image_shape, max_overlap))
 
             patch_centres.append([r.centre() for r in rects])
 
             # Populate rectangles
-            x = np.zeros((image_width, image_width), 'f')
-            for image, rect in zip(images, rects):
+            x = np.zeros(image_shape, 'f')
+            for image, rect in zip(sub_images, rects):
                 patch = x[rect.top:rect.bottom, rect.left:rect.right]
                 x[rect.top:rect.bottom, rect.left:rect.right] = np.maximum(image, patch)
 
@@ -343,10 +344,10 @@ class MnistArithmeticDataset(PatchesDataset):
         Maximum number of digits in each image.
     base: int (<= 10, > 0)
         Base of digits that appear in image (e.g. if `base == 2`, only digits 0 and 1 appear).
+    sub_image_shape: int
+        Shape of component EMNIST images.
     image_shape: int
-        Size of EMNIST images.
-    image_width: int
-        Width in pixels of the images.
+        Shape of input images.
     max_overlap: int
         Maximum number of pixels that are permitted to be occupied by two separate emnist images.
         Setting to higher values allows more digits to be packed into an image of a fixed size.
@@ -354,7 +355,7 @@ class MnistArithmeticDataset(PatchesDataset):
     """
     def __init__(
             self, data_path, n_examples, reductions, min_digits=1,
-            max_digits=1, base=10, image_shape=None, image_width=100, max_overlap=200):
+            max_digits=1, base=10, sub_image_shape=None, image_shape=(100, 100), max_overlap=200):
 
         data_path = Path(data_path).expanduser()
 
@@ -362,12 +363,12 @@ class MnistArithmeticDataset(PatchesDataset):
         self.max_digits = max_digits
 
         self.X, self.Y, _ = load_emnist(
-            data_path, [str(i) for i in range(base)], image_shape=image_shape)
+            data_path, [str(i) for i in range(base)], shape=sub_image_shape)
 
         if isinstance(reductions, dict):
             self.sample_op = True
             self.eX, self.eY, op_class_map = load_emnist(
-                data_path, list(reductions.keys()), image_shape=image_shape)
+                data_path, list(reductions.keys()), shape=sub_image_shape)
 
             self._remapped_reductions = {op_class_map[k]: v for k, v in reductions.items()}
         else:
@@ -376,7 +377,7 @@ class MnistArithmeticDataset(PatchesDataset):
             self.sample_op = False
             self.eX = self.eY = None
 
-        super(MnistArithmeticDataset, self).__init__(n_examples, image_width, max_overlap)
+        super(MnistArithmeticDataset, self).__init__(n_examples, image_shape, max_overlap)
 
         del self.X
         del self.Y
@@ -415,15 +416,15 @@ class MnistSalienceDataset(PatchesDataset):
         Minimum number of digits in each image.
     max_digits: int (> 0)
         Maximum number of digits in each image.
+    sub_image_shape: (int, int)
+        Shape of component images used to create input images.
     image_shape: (int, int)
-        Shape of images.
-    image_width: int
-        Width in pixels of the input images.
+        Shape of the input images.
+    output_shape: (int, int)
+        Shape of the output salience maps.
     max_overlap: int
         Maximum number of pixels that are permitted to be occupied by two separate emnist images.
         Setting to higher values allows more digits to be packed into an image of a fixed size.
-    output_width: int
-        Width in pixels of the output images.
     std: float > 0
         Standard deviation of the salience bumps.
     flatten_output: bool
@@ -434,8 +435,8 @@ class MnistSalienceDataset(PatchesDataset):
     """
     def __init__(
             self, data_path, n_examples, classes=None, min_digits=1, max_digits=1,
-            image_shape=None, image_width=42, max_overlap=1, output_width=14, std=0.1,
-            flatten_output=False, point=False):
+            sub_image_shape=(14, 14), image_shape=(42, 42), output_shape=(14, 14),
+            max_overlap=1, std=0.1, flatten_output=False, point=False):
         if not classes:
             classes = list(range(10))
 
@@ -444,25 +445,26 @@ class MnistSalienceDataset(PatchesDataset):
         self.min_digits = min_digits
         self.max_digits = max_digits
 
-        self.output_width = output_width
+        self.output_shape = output_shape
         self.std = std
 
-        self.X, self.Y, _ = load_emnist(data_path, classes, image_shape=image_shape)
+        self.X, self.Y, _ = load_emnist(data_path, classes, shape=sub_image_shape)
 
-        super(MnistSalienceDataset, self).__init__(n_examples, image_width, max_overlap)
+        super(MnistSalienceDataset, self).__init__(n_examples, image_shape, max_overlap)
 
         y = []
 
         for x, pc in zip(self.x, self.patch_centres):
-            _y = np.zeros((output_width, output_width))
+            _y = np.zeros(output_shape)
             for centre in pc:
                 if point:
-                    pixel_y = int(output_width * centre[0] / image_width)
-                    pixel_x = int(output_width * centre[1] / image_width)
+                    pixel_y = int(centre[0] * output_shape[0] / image_shape[0])
+                    pixel_x = int(centre[1] * output_shape[1] / image_shape[1])
                     _y[pixel_y, pixel_x] = 1.0
                 else:
-                    _y = np.maximum(_y, gaussian_kernel(
-                        output_width, (centre[0]/image_width, centre[1]/image_width), std))
+                    kernel = gaussian_kernel(
+                        output_shape, (centre[0]/image_shape[0], centre[1]/image_shape[1]), std)
+                    _y = np.maximum(_y, kernel)
             y.append(_y)
 
         y = np.array(y)
@@ -485,15 +487,16 @@ class MnistSalienceDataset(PatchesDataset):
         m = int(np.ceil(np.sqrt(n)))
         fig, axes = plt.subplots(m, 2 * m)
         for i, s in enumerate(axes[:, :m].flatten()):
-            s.imshow(self.x[i, :].reshape(self.image_width, self.image_width))
+            s.imshow(self.x[i, :].reshape(self.image_shape))
         for i, s in enumerate(axes[:, m:].flatten()):
-            s.imshow(self.y[i, :].reshape(self.output_width, self.output_width))
+            s.imshow(self.y[i, :].reshape(self.image_shape))
 
 
-def gaussian_kernel(width, mu, std):
+def gaussian_kernel(shape, mu, std):
     """ creates gaussian kernel with side length l and a sigma of sig """
-    ax = (np.arange(width) + 0.5) / width
-    xx, yy = np.meshgrid(ax, ax)
+    axy = (np.arange(shape[0]) + 0.5) / shape[1]
+    axx = (np.arange(shape[1]) + 0.5) / shape[1]
+    xx, yy = np.meshgrid(axx, axy)
 
     kernel = np.exp(-((xx - mu[1])**2 + (yy - mu[0])**2) / (2. * std**2))
 
@@ -501,8 +504,8 @@ def gaussian_kernel(width, mu, std):
 
 
 def test(
-        reductions, image_shape=(28, 28), n_examples=20,
-        min_digits=1, max_digits=3, base=10, image_width=100,
+        reductions, sub_image_shape=(28, 28), n_examples=20,
+        min_digits=1, max_digits=3, base=10, image_shape=(100, 100),
         max_overlap=200):
 
     parser = argparse.ArgumentParser()
@@ -511,7 +514,7 @@ def test(
 
     dataset = MnistArithmeticDataset(
         args.path, n_examples, reductions, min_digits=min_digits, max_digits=max_digits,
-        base=base, image_width=image_width, max_overlap=max_overlap, image_shape=image_shape)
+        base=base, sub_image_shape=sub_image_shape, image_shape=image_shape, max_overlap=max_overlap)
 
     batch_x, batch_y = dataset.next_batch()
 
@@ -521,8 +524,8 @@ def test(
 
 
 def test_salience(
-        image_shape=(14, 14), n_examples=20,
-        min_digits=2, max_digits=3, image_width=40,
+        sub_image_shape=(14, 14), n_examples=20,
+        min_digits=2, max_digits=3, image_shape=(40, 40),
         max_overlap=1):
 
     parser = argparse.ArgumentParser()
@@ -531,9 +534,9 @@ def test_salience(
 
     dataset = MnistSalienceDataset(
         args.path, n_examples, [0, 1, 2], min_digits=min_digits,
-        max_digits=max_digits, image_width=image_width,
-        max_overlap=max_overlap, image_shape=image_shape,
-        std=0.05, output_width=20)
+        max_digits=max_digits, sub_image_shape=sub_image_shape,
+        image_shape=image_shape, max_overlap=max_overlap,
+        std=0.05, output_shape=(20, 20))
 
     batch_x, batch_y = dataset.next_batch()
 
@@ -550,6 +553,6 @@ if __name__ == "__main__":
         'X': max,
         'N': min,
     }
-    test(reductions, image_shape=(14, 14), image_width=100, max_overlap=10)
-    test(sum, image_shape=(14, 14), image_width=40, max_overlap=10)
+    test(reductions, sub_image_shape=(14, 14), image_shape=(100, 100), max_overlap=10)
+    test(sum, sub_image_shape=(28, 28), image_shape=(100, 100), max_overlap=10)
     test_salience()
