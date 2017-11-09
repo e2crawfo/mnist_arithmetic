@@ -10,4 +10,4 @@ from setuptools import find_packages, setup  # noqa: F811
 setup(name='mnist_arithmetic',
       version='0.1',
       packages=find_packages(),
-      install_requires=['numpy>=1.7'])
+      install_requires=['numpy>=1.7', 'scikit-image'])

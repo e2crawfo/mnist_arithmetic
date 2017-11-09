@@ -20,7 +20,7 @@ def omniglot_classes(path):
 
 # Class spec: alphabet,character
 def load_omniglot(
-        path, classes, include_blank=False, image_shape=None, one_hot=False, indices=None, show=False):
+        path, classes, include_blank=False, shape=None, one_hot=False, indices=None, show=False):
     """ Load omniglot data from disk by class.
 
     Elements of `classes` pick out which omniglot classes to load, but different labels
@@ -39,7 +39,7 @@ def load_omniglot(
         from classes that are larger than the minimu-size class.
     include_blank: boolean
         If True, includes an additional class that consists of blank images.
-    image_shape: (int, int)
+    shape: (int, int)
         Shape of returned images.
     one_hot: bool
         If True, labels are one-hot vectors instead of integers.
@@ -68,8 +68,8 @@ def load_omniglot(
             f = os.path.join(char_dir, "{}_{:02d}.png".format(class_id, idx + 1))
             _x = scipy.misc.imread(f)
             _x = 255. - _x
-            if image_shape:
-                _x = resize(_x, image_shape)
+            if shape:
+                _x = resize(_x, shape, mode='edge')
 
             x.append(np.float32(_x))
             y.append(i)
@@ -83,7 +83,7 @@ def load_omniglot(
 
     if include_blank:
         class_count = min([(y == class_map[c]).sum() for c in classes])
-        blanks = np.zeros((class_count, x.shape[1]))
+        blanks = np.zeros((class_count,) + shape)
         x = np.concatenate((x, blanks), axis=0)
         blank_idx = len(class_map)
         y = np.concatenate((y, blank_idx * np.ones((class_count, 1), dtype=y.dtype)), axis=0)
@@ -104,18 +104,19 @@ def load_omniglot(
     return x, y, class_map
 
 
-def test():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--path', type=str, default='.')
-    args = parser.parse_args()
-
+def test(path):
     np.random.seed(10)
 
     classes = omniglot_classes(args.path)
     classes = np.random.choice(classes, 20, replace=False)
 
-    x, y, _ = load_omniglot(args.path, classes, image_shape=(28, 28), show=True)
+    x, y, _ = load_omniglot(path, classes, shape=(28, 28), show=True)
+    print(x.max())
 
 
 if __name__ == "__main__":
-    test()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('path', type=str)
+    args = parser.parse_args()
+
+    test(args.path)
