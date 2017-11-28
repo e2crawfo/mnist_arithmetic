@@ -28,10 +28,13 @@ def load_omniglot(
     be in range(len(classes)). We return a dictionary `class_map` which maps from
     elements of `classes` down to range(len(classes)).
 
+    Returned images are arrays of floats in the range 0-255. White text on black background
+    (with 0 corresponding to black). Returned X array has shape (n_images,) + shape.
+
     Parameters
     ----------
     path: str
-        Path to 'omniglot' directory.
+        Path to data directory, assumed to contain a sub-directory called `omniglot`.
     classes: list of strings, each giving a class label
         Each character is the name of a class to load.
     balance: boolean
@@ -111,7 +114,6 @@ def test(path):
     classes = np.random.choice(classes, 20, replace=False)
 
     x, y, _ = load_omniglot(path, classes, shape=(28, 28), show=True)
-    print(x.max())
 
 
 if __name__ == "__main__":

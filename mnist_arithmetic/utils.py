@@ -1,4 +1,6 @@
 import numpy as np
+import os
+from contextlib import contextmanager
 
 
 # Character used for ascii art, sorted in order of increasing sparsity
@@ -25,3 +27,21 @@ def image_to_string(array):
     return '\n'.join(''.join(c for c in row) for row in image)
 
 
+@contextmanager
+def cd(path):
+    """ A context manager that changes into given directory on __enter__,
+        change back to original_file directory on exit. Exception safe.
+
+    """
+    path = str(path)
+    old_dir = os.getcwd()
+    os.chdir(path)
+
+    try:
+        yield
+    finally:
+        os.chdir(old_dir)
+
+
+def process_path(path):
+    return os.path.realpath(os.path.expandvars(os.path.expanduser(str(path))))

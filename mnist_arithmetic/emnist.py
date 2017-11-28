@@ -4,8 +4,85 @@ import gzip
 import argparse
 from skimage.transform import resize
 import numpy as np
+import os
+import shutil
 
-from mnist_arithmetic.utils import image_to_string
+from mnist_arithmetic.utils import image_to_string, cd
+
+
+emnist_filenames = [
+    '0.pklz',
+    '1.pklz',
+    '2.pklz',
+    '3.pklz',
+    '4.pklz',
+    '5.pklz',
+    '6.pklz',
+    '7.pklz',
+    '8.pklz',
+    '9.pklz',
+    'A.pklz',
+    'B.pklz',
+    'C.pklz',
+    'D.pklz',
+    'E.pklz',
+    'F.pklz',
+    'G.pklz',
+    'H.pklz',
+    'I.pklz',
+    'J.pklz',
+    'K.pklz',
+    'L.pklz',
+    'M.pklz',
+    'N.pklz',
+    'O.pklz',
+    'P.pklz',
+    'Q.pklz',
+    'R.pklz',
+    'S.pklz',
+    'T.pklz',
+    'U.pklz',
+    'V.pklz',
+    'W.pklz',
+    'X.pklz',
+    'Y.pklz',
+    'Z.pklz',
+    'a.pklz',
+    'b.pklz',
+    'c.pklz',
+    'd.pklz',
+    'e.pklz',
+    'f.pklz',
+    'g.pklz',
+    'h.pklz',
+    'i.pklz',
+    'j.pklz',
+    'k.pklz',
+    'l.pklz',
+    'm.pklz',
+    'n.pklz',
+    'o.pklz',
+    'p.pklz',
+    'q.pklz',
+    'r.pklz',
+    's.pklz',
+    't.pklz',
+    'u.pklz',
+    'v.pklz',
+    'w.pklz',
+    'x.pklz',
+    'y.pklz',
+    'z.pklz'
+]
+
+
+def _validate_emnist(path):
+    path = str(path)
+    if not os.path.isdir(path):
+        return False
+
+    with cd(path):
+        return set(os.listdir(path)) == set(emnist_filenames)
 
 
 def convert_emnist_and_store(path, new_image_shape):
@@ -14,8 +91,12 @@ def convert_emnist_and_store(path, new_image_shape):
 
     print("Converting (28, 28) EMNIST dataset to {}...".format(new_image_shape))
 
-    emnist_dir = Path(path) / 'emnist/emnist-byclass'
-    new_dir = Path(path) / 'emnist/emnist-byclass_{}_by_{}'.format(*new_image_shape)
+    emnist_dir = Path(path) / 'emnist'
+    new_dir = Path(path) / 'emnist_{}_by_{}'.format(*new_image_shape)
+    try:
+        shutil.rmtree(str(new_dir))
+    except FileNotFoundError:
+        pass
     new_dir.mkdir(exist_ok=False, parents=False)
 
     classes = ''.join(
@@ -59,7 +140,7 @@ def load_emnist(
     Parameters
     ----------
     path: str
-        Path to 'emnist-byclass' directory.
+        Path to data directory, assumed to contain a sub-directory called `emnist`.
     classes: list of character from the set (0-9, A-Z, a-z)
         Each character is the name of a class to load.
     balance: boolean
@@ -77,12 +158,12 @@ def load_emnist(
         If True, prints out an image from each class.
 
     """
-    emnist_dir = Path(path) / 'emnist/emnist-byclass'
+    emnist_dir = Path(path) / 'emnist'
 
     if shape and shape != (28, 28):
-        emnist_dir = Path(path) / 'emnist/emnist-byclass_{}_by_{}'.format(*shape)
+        emnist_dir = Path(path) / 'emnist_{}_by_{}'.format(*shape)
 
-        if not emnist_dir.exists():
+        if not _validate_emnist(emnist_dir):
             convert_emnist_and_store(path, shape)
 
     classes = list(classes)[:]
@@ -330,7 +411,7 @@ class MnistArithmeticDataset(PatchesDataset):
     ----------
     data_path: str
         Directory containing data. Assumes there is a sub-directory
-        called `emnist/emnist-byclass' inside it.
+        called `emnist` inside it.
     n_examples: int
         Number of input-output pairs to create.
     reductions: dict (str -> function) or single function

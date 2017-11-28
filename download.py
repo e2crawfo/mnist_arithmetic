@@ -3,22 +3,21 @@ import numpy as np
 from scipy.io import loadmat
 import dill
 import gzip
-from pathlib import Path
 import argparse
 import os
 import subprocess
 import zipfile
-from contextlib import contextmanager
 
-from mnist_arithmetic.utils import image_to_string
+from mnist_arithmetic.emnist import _validate_emnist
+from mnist_arithmetic.utils import image_to_string, cd, process_path
 
 
 emnist_url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/matlab.zip'
 
 
-def maybe_download_emnist(path):
+def download_emnist(path):
     """
-    Download the data if it is not already in place.
+    Download the emnist data. Result is that a file called `emnist-byclass.mat` is stored in `path`.
 
     Parameters
     ----------
@@ -26,34 +25,23 @@ def maybe_download_emnist(path):
         Path to directory where files should be stored.
 
     """
-    path = Path(path).expanduser()
-    emnist_path = path / 'emnist'
-    if not (emnist_path / 'emnist-byclass').exists():
-        zip_filename = path / 'emnist.zip'
-        if not zip_filename.exists():
-            print("{} not found, downloading...".format(zip_filename))
-            subprocess.run('wget -P {} {}'.format(path, emnist_url).split())
-            shutil.move(str(path / 'matlab.zip'), str(path / 'emnist.zip'))
-
-        shutil.rmtree(str(path / 'matlab'), ignore_errors=True)
-        shutil.rmtree(str(emnist_path), ignore_errors=True)
-
-        print("Extracting {}...".format(zip_filename))
-        zip_ref = zipfile.ZipFile(str(zip_filename), 'r')
-        zip_ref.extractall(str(path))
-        zip_ref.close()
-        shutil.move(str(path / 'matlab'), str(emnist_path))
-
-        os.remove(str(emnist_path / 'emnist-balanced.mat'))
-        os.remove(str(emnist_path / 'emnist-bymerge.mat'))
-        os.remove(str(emnist_path / 'emnist-digits.mat'))
-        os.remove(str(emnist_path / 'emnist-letters.mat'))
-        os.remove(str(emnist_path / 'emnist-mnist.mat'))
+    if not os.path.exists('matlab.zip'):
+        print("Downloading...")
+        subprocess.run(('wget ' + emnist_url).split(), check=True)
     else:
-        print("Data found, skipping download.")
+        print("Found existing copy of matlab.zip, not downloading.")
+
+    matlab_zip_path = process_path('./matlab.zip')
+
+    with cd(path):
+        print("Extracting...")
+        subprocess.run('unzip {} matlab/emnist-byclass.mat'.format(matlab_zip_path), shell=True, check=True)
+
+        shutil.move('matlab/emnist-byclass.mat', '.')
+        shutil.rmtree('matlab')
 
 
-def process_emnist(path):
+def process_emnist(data_dir):
     """
     Download emnist data if it hasn't already been downloaded. Do some
     post-processing to put it in a more useful format. End result is a directory
@@ -67,96 +55,160 @@ def process_emnist(path):
 
     Parameters
     ----------
-    path: str
-        Path to directory where files should be stored.
+    data_dir: str
+         Directory where files should be stored.
 
     """
-    maybe_download_emnist(path)
+    emnist_dir = process_path(os.path.join(data_dir, 'emnist'))
 
-    path = Path(path)
+    if _validate_emnist(emnist_dir):
+        print("EMNIST data seems to be present already, exiting.")
+        return
+    else:
+        try:
+            shutil.rmtree(emnist_dir)
+        except FileNotFoundError:
+            pass
+
+    os.makedirs(emnist_dir, exist_ok=True)
+
+    download_emnist(emnist_dir)
 
     print("Processing...")
-    emnist_path = path / 'emnist'
-    mat_path = emnist_path / 'emnist-byclass.mat'
-    dir_name = emnist_path / 'emnist-byclass'
-    try:
-        shutil.rmtree(str(dir_name))
-    except FileNotFoundError:
-        pass
+    with cd(emnist_dir):
+        emnist = loadmat('emnist-byclass.mat')
 
-    dir_name.mkdir(exist_ok=False, parents=False)
+        train, test, _ = emnist['dataset'][0, 0]
+        train_x, train_y, _ = train[0, 0]
+        test_x, test_y, _ = test[0, 0]
 
-    emnist = loadmat(str(mat_path))
-    train, test, _ = emnist['dataset'][0, 0]
-    train_x, train_y, _ = train[0, 0]
-    test_x, test_y, _ = test[0, 0]
+        y = np.concatenate((train_y, test_y), 0)
+        x = np.concatenate((train_x, test_x), 0)
 
-    y = np.concatenate((train_y, test_y), 0)
-    x = np.concatenate((train_x, test_x), 0)
+        # Give images the right orientation so that plt.imshow(x[0]) just works.
+        x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2)
+        x = x.astype('f') / 255.0
 
-    # Give images the right orientation so that plt.imshow(x[0]) just works.
-    x = np.moveaxis(x.reshape(-1, 28, 28), 1, 2)
-    x = x.astype('f') / 255.0
+        for i in sorted(set(y.flatten())):
+            keep = y == i
+            x_i = x[keep.flatten(), :]
+            if i >= 36:
+                char = chr(i-36+ord('a'))
+            elif i >= 10:
+                char = chr(i-10+ord('A'))
+            else:
+                char = str(i)
 
-    for i in sorted(set(y.flatten())):
-        keep = y == i
-        x_i = x[keep.flatten(), :]
-        if i >= 36:
-            char = chr(i-36+ord('a'))
-        elif i >= 10:
-            char = chr(i-10+ord('A'))
-        else:
-            char = str(i)
+            print(char)
+            print(image_to_string(x_i[0, ...]))
 
-        print(char)
-        print(image_to_string(x_i[0, ...]))
+            file_i = char + '.pklz'
+            with gzip.open(file_i, 'wb') as f:
+                dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
 
-        path_i = dir_name / (char + '.pklz')
-        with gzip.open(str(path_i), 'wb') as f:
-            dill.dump(x_i, f, protocol=dill.HIGHEST_PROTOCOL)
+        os.remove('emnist-byclass.mat')
 
-    os.remove(str(path / 'emnist/emnist-byclass.mat'))
+    print("Done setting up EMNIST data.")
 
     return x, y
 
 
-@contextmanager
-def cd(path):
-    """ A context manager that changes into given directory on __enter__,
-        change back to original_file directory on exit. Exception safe.
+omniglot_alphabets = [
+    'Bengali',
+    'Balinese',
+    'Arcadian',
+    'Tibetan',
+    'Braille',
+    'Burmese_(Myanmar)',
+    'Malay_(Jawi_-_Arabic)',
+    'Cyrillic',
+    'Hebrew',
+    'Atemayar_Qelisayer',
+    'Latin',
+    'Mkhedruli_(Georgian)',
+    'Mongolian',
+    'Asomtavruli_(Georgian)',
+    'Oriya',
+    'Kannada',
+    'Futurama',
+    'Inuktitut_(Canadian_Aboriginal_Syllabics)',
+    'Tifinagh',
+    'Old_Church_Slavonic_(Cyrillic)',
+    'Grantha',
+    'Greek',
+    'N_Ko',
+    'Blackfoot_(Canadian_Aboriginal_Syllabics)',
+    'Malayalam',
+    'Manipuri',
+    'Gujarati',
+    'Anglo-Saxon_Futhorc',
+    'Korean',
+    'Sanskrit',
+    'Sylheti',
+    'Aurek-Besh',
+    'Ojibwe_(Canadian_Aboriginal_Syllabics)',
+    'Gurmukhi',
+    'Avesta',
+    'Angelic',
+    'Japanese_(katakana)',
+    'Japanese_(hiragana)',
+    'ULOG',
+    'Early_Aramaic',
+    'Tagalog',
+    'Glagolitic',
+    'Syriac_(Serto)',
+    'Alphabet_of_the_Magi',
+    'Armenian',
+    'Syriac_(Estrangelo)',
+    'Keble',
+    'Atlantean',
+    'Ge_ez',
+    'Tengwar'
+]
 
-    """
-    path = str(path)
-    old_dir = os.getcwd()
-    os.chdir(path)
 
+def _validate_omniglot(path):
+    if not os.path.isdir(path):
+        return False
+
+    with cd(path):
+        return set(os.listdir(path)) == set(omniglot_alphabets)
+
+
+def process_omniglot(data_dir):
     try:
-        yield
-    finally:
-        os.chdir(old_dir)
+        omniglot_dir = process_path(os.path.join(data_dir, 'omniglot'))
 
+        if _validate_omniglot(omniglot_dir):
+            print("Omniglot data seems to be present already, exiting.")
+            return
+        else:
+            try:
+                shutil.rmtree(omniglot_dir)
+            except FileNotFoundError:
+                pass
 
-def process_omniglot(dest):
-    try:
-        subprocess.run("git clone https://github.com/brendenlake/omniglot".split())
-        omniglot_dir = os.path.join(dest, 'omniglot')
-        os.makedirs(omniglot_dir, exist_ok=True)
+        os.makedirs(omniglot_dir, exist_ok=False)
 
-        with cd(os.path.join('omniglot/python')):
-            zip_ref = zipfile.ZipFile('images_evaluation.zip', 'r')
-            zip_ref.extractall('.')
-            zip_ref.close()
+        with cd(omniglot_dir):
+            subprocess.run("git clone https://github.com/brendenlake/omniglot --depth=1".split(), check=True)
 
-            zip_ref = zipfile.ZipFile('images_background.zip', 'r')
-            zip_ref.extractall('.')
-            zip_ref.close()
+            with cd('omniglot/python'):
+                zip_ref = zipfile.ZipFile('images_evaluation.zip', 'r')
+                zip_ref.extractall('.')
+                zip_ref.close()
 
-        subprocess.run('mv omniglot/python/images_background/* {}'.format(omniglot_dir), shell=True)
-        subprocess.run('mv omniglot/python/images_evaluation/* {}'.format(omniglot_dir), shell=True)
+                zip_ref = zipfile.ZipFile('images_background.zip', 'r')
+                zip_ref.extractall('.')
+                zip_ref.close()
+
+            subprocess.run('mv omniglot/python/images_background/* .', shell=True, check=True)
+            subprocess.run('mv omniglot/python/images_evaluation/* .', shell=True, check=True)
+        print("Done setting up Omniglot data.")
     finally:
         try:
-            shutil.rmtree('omniglot')
-        except:
+            shutil.rmtree(os.path.join(omniglot_dir, 'omniglot'))
+        except FileNotFoundError:
             pass
 
 
