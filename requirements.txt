@@ -1,1 +1,2 @@
-dill
+dill==0.2.6
+numpy>=1.7
