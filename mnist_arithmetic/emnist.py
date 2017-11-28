@@ -417,8 +417,6 @@ def test(
         print("\nCorrect answer is: {}".format(y[0]))
         print(image_to_string(x))
 
-    print(batch_x.max())
-
 
 if __name__ == "__main__":
     reductions = {
@@ -433,5 +431,6 @@ if __name__ == "__main__":
     parser.add_argument('path', type=str)
     args = parser.parse_args()
 
-    test(args.path, reductions, sub_image_shape=(14, 14), image_shape=(100, 100), max_overlap=10)
+    # test(args.path, reductions, sub_image_shape=(14, 14), image_shape=(100, 100), max_overlap=10)
+    test(args.path, reductions, sub_image_shape=(28, 28), image_shape=(100, 100), max_overlap=10)
     test(args.path, sum, sub_image_shape=(28, 28), image_shape=(100, 100), max_overlap=10)
