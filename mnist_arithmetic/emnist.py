@@ -6,6 +6,7 @@ from skimage.transform import resize
 import numpy as np
 import os
 import shutil
+import warnings
 
 from mnist_arithmetic.utils import image_to_string, cd
 
@@ -160,11 +161,14 @@ def load_emnist(
     """
     emnist_dir = Path(path) / 'emnist'
 
+    needs_reshape = False
     if shape and shape != (28, 28):
-        emnist_dir = Path(path) / 'emnist_{}_by_{}'.format(*shape)
+        resized_dir = Path(path) / 'emnist_{}_by_{}'.format(*shape)
 
-        if not _validate_emnist(emnist_dir):
-            convert_emnist_and_store(path, shape)
+        if _validate_emnist(resized_dir):
+            emnist_dir = resized_dir
+        else:
+            needs_reshape = True
 
     classes = list(classes)[:]
     y = []
@@ -216,6 +220,16 @@ def load_emnist(
         _y = np.zeros((y.shape[0], len(classes))).astype('f')
         _y[np.arange(y.shape[0]), y.flatten()] = 1.0
         y = _y
+
+    if needs_reshape:
+        if x.shape[0] > 10000:
+            warnings.warn(
+                "Performing an online resize of a large number of images ({}), "
+                "consider creating and storing the resized dataset."
+            )
+
+        x = [resize(img, shape, mode='edge') for img in np.uint8(x)]
+        x = np.float32(np.uint8(255*np.minimum(x, 1)))
 
     return x, y, class_map
 

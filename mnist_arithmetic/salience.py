@@ -39,7 +39,7 @@ class SalienceDataset(PatchesDataset):
     """
     def __init__(
             self, data_path, n_examples, classes=None, min_digits=1, max_digits=1,
-            sub_image_shape=(14, 14), image_shape=(42, 42), output_shape=(14, 14),
+            n_sub_image_examples=None, sub_image_shape=(14, 14), image_shape=(42, 42), output_shape=(14, 14),
             max_overlap=1, std=0.1, flatten_output=False, point=False):
         if not classes:
             classes = list(range(10))
@@ -52,7 +52,8 @@ class SalienceDataset(PatchesDataset):
         self.output_shape = output_shape
         self.std = std
 
-        self.X, self.Y, _ = load_emnist(data_path, classes, shape=sub_image_shape)
+        self.X, self.Y, _ = load_emnist(
+            data_path, classes, shape=sub_image_shape, n_examples=n_sub_image_examples)
 
         super(SalienceDataset, self).__init__(n_examples, image_shape, max_overlap)
 
