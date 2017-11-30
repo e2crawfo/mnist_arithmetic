@@ -41,7 +41,7 @@ def download_emnist(path):
         shutil.rmtree('matlab')
 
 
-def process_emnist(data_dir):
+def process_emnist(data_dir, quiet):
     """
     Download emnist data if it hasn't already been downloaded. Do some
     post-processing to put it in a more useful format. End result is a directory
@@ -99,8 +99,13 @@ def process_emnist(data_dir):
             else:
                 char = str(i)
 
-            print(char)
-            print(image_to_string(x_i[0, ...]))
+            if quiet >= 2:
+                pass
+            elif quiet == 1:
+                print(char)
+            elif quiet <= 0:
+                print(char)
+                print(image_to_string(x_i[0, ...]))
 
             file_i = char + '.pklz'
             with gzip.open(file_i, 'wb') as f:
@@ -175,7 +180,7 @@ def _validate_omniglot(path):
         return set(os.listdir(path)) == set(omniglot_alphabets)
 
 
-def process_omniglot(data_dir):
+def process_omniglot(data_dir, quiet):
     try:
         omniglot_dir = process_path(os.path.join(data_dir, 'omniglot'))
 
@@ -216,11 +221,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('kind', type=str, choices=['emnist', 'omniglot'])
     parser.add_argument('path', type=str)
+    parser.add_argument('-q', action='count')
     args = parser.parse_args()
 
     if args.kind == 'emnist':
-        process_emnist(args.path)
+        process_emnist(args.path, args.q)
     elif args.kind == 'omniglot':
-        process_omniglot(args.path)
+        process_omniglot(args.path, args.q)
     else:
         raise Exception("NotImplemented")

@@ -9,7 +9,7 @@ from setuptools import find_packages, setup  # noqa: F811
 
 setup(
     name='mnist_arithmetic',
-    version='0.2',
+    version='0.2.3',
     packages=find_packages(),
     setup_requires=['numpy>=1.7'],
     install_requires=[
