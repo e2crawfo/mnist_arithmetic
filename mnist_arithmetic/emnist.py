@@ -225,7 +225,7 @@ def load_emnist(
         if x.shape[0] > 10000:
             warnings.warn(
                 "Performing an online resize of a large number of images ({}), "
-                "consider creating and storing the resized dataset."
+                "consider creating and storing the resized dataset.".format(x.shape[0])
             )
 
         x = [resize(img, shape, mode='edge') for img in np.uint8(x)]
