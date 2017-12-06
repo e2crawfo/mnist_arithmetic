@@ -346,8 +346,17 @@ class RegressionDataset(object):
 
 
 class PatchesDataset(RegressionDataset):
-    def __init__(self, n_examples, image_shape, max_overlap, **kwargs):
+    def __init__(self, n_examples, image_shape, max_overlap, draw_shape=None, draw_offset=None, **kwargs):
         self.image_shape = image_shape
+        self.draw_shape = draw_shape or image_shape
+        self.draw_offset = draw_offset or (0, 0)
+
+        assert self.draw_offset[0] >= 0
+        assert self.draw_offset[1] >= 0
+
+        assert self.draw_offset[0] + self.draw_shape[0] <= self.image_shape[0]
+        assert self.draw_offset[1] + self.draw_shape[1] <= self.image_shape[1]
+
         self.max_overlap = max_overlap
 
         x, y, self.patch_centres = self._make_dataset(n_examples)
@@ -357,7 +366,6 @@ class PatchesDataset(RegressionDataset):
         raise Exception("AbstractMethod")
 
     def _make_dataset(self, n_examples):
-        max_overlap, image_shape = self.max_overlap, self.image_shape
         if n_examples == 0:
             return np.zeros((0,) + self.image_shape).astype('f'), np.zeros((0, 1)).astype('i')
 
@@ -374,15 +382,15 @@ class PatchesDataset(RegressionDataset):
             while True:
                 rects = [
                     Rect(
-                        np.random.randint(0, image_shape[0]-m+1),
-                        np.random.randint(0, image_shape[1]-n+1), m, n)
+                        np.random.randint(0, self.draw_shape[0]-m+1),
+                        np.random.randint(0, self.draw_shape[1]-n+1), m, n)
                     for m, n in sub_image_shapes]
-                area = np.zeros(image_shape, 'f')
+                area = np.zeros(self.draw_shape, 'f')
 
                 for rect in rects:
                     area[rect.top:rect.bottom, rect.left:rect.right] += 1
 
-                if (area >= 2).sum() < max_overlap:
+                if (area >= 2).sum() < self.max_overlap:
                     break
 
                 i += 1
@@ -390,16 +398,23 @@ class PatchesDataset(RegressionDataset):
                 if i > 1000:
                     raise Exception(
                         "Could not fit rectangles. "
-                        "(n_rects: {}, image_shape: {}, max_overlap: {})".format(
-                            n_rects, image_shape, max_overlap))
+                        "(n_rects: {}, draw_shape: {}, max_overlap: {})".format(
+                            n_rects, self.draw_shape, self.max_overlap))
 
             patch_centres.append([r.centre() for r in rects])
 
             # Populate rectangles
-            x = np.zeros(image_shape, 'f')
+            x = np.zeros(self.draw_shape, 'f')
             for image, rect in zip(sub_images, rects):
                 patch = x[rect.top:rect.bottom, rect.left:rect.right]
                 x[rect.top:rect.bottom, rect.left:rect.right] = np.maximum(image, patch)
+
+            if self.draw_shape != self.image_shape or self.draw_offset != (0, 0):
+                _x = np.zeros(self.image_shape, 'f')
+                y_start, x_start = self.draw_offset
+                y_end, x_end = y_start + self.draw_shape[0], x_start + self.draw_shape[1]
+                _x[y_start:y_end, x_start:x_end] = x
+                x = _x
 
             new_X.append(x)
             new_Y.append(y)
@@ -437,10 +452,19 @@ class MnistArithmeticDataset(PatchesDataset):
         Minimum number of digits in each image.
     max_digits: int (> 0)
         Maximum number of digits in each image.
+    one_hot: bool
+        Whether to specify labels as one-hot vectors.
+    largest_digit: int > 0
+        Largest digit that gets its own class when doing one-hot encoding. All larger digits
+        mapped to a final class. So there are `largest_digit + 2` classes in total.
     base: int (<= 10, > 0)
         Base of digits that appear in image (e.g. if `base == 2`, only digits 0 and 1 appear).
     sub_image_shape: int
         Shape of component EMNIST images.
+    draw_shape: int
+        Shape of sub-region of the overall image in which digits will be drawn.
+    draw_offset: int
+        Top left corner of sub-region of the overall image in which digits will be drawn.
     image_shape: int
         Shape of input images.
     max_overlap: int
@@ -448,17 +472,38 @@ class MnistArithmeticDataset(PatchesDataset):
         Setting to higher values allows more digits to be packed into an image of a fixed size.
 
     """
+    reductions_dict = {
+        "sum": sum,
+        "prod": np.product,
+        "max": max,
+        "min": min,
+        "len": len,
+    }
+
     def __init__(
-            self, data_path, n_examples, reductions, min_digits=1,
-            max_digits=1, base=10, sub_image_shape=None, image_shape=(100, 100), max_overlap=200):
+            self, data_path, n_examples, reductions, min_digits=1, max_digits=1, one_hot=False, largest_digit=99,
+            base=10, sub_image_shape=None, draw_shape=None, draw_offset=None, image_shape=(100, 100), max_overlap=200):
 
         data_path = Path(data_path).expanduser()
 
         self.min_digits = min_digits
         self.max_digits = max_digits
+        self.one_hot = one_hot
+        self.largest_digit = largest_digit
 
         self.X, self.Y, _ = load_emnist(
             data_path, [str(i) for i in range(base)], shape=sub_image_shape)
+
+        if isinstance(reductions, str):
+            if ":" not in reductions:
+                reductions = self.reductions_dict[reductions.strip()]
+            else:
+                _reductions = {}
+                delim = ',' if ',' in reductions else ' '
+                for pair in reductions.split(delim):
+                    char, key = pair.split(':')
+                    _reductions[char] = self.reductions_dict[key]
+                reductions = _reductions
 
         if isinstance(reductions, dict):
             self.sample_op = True
@@ -472,7 +517,7 @@ class MnistArithmeticDataset(PatchesDataset):
             self.sample_op = False
             self.eX = self.eY = None
 
-        super(MnistArithmeticDataset, self).__init__(n_examples, image_shape, max_overlap)
+        super(MnistArithmeticDataset, self).__init__(n_examples, image_shape, max_overlap, draw_shape, draw_offset)
 
         del self.X
         del self.Y
@@ -494,17 +539,21 @@ class MnistArithmeticDataset(PatchesDataset):
 
         y = func([self.Y[i] for i in digit_indices])
 
+        if self.one_hot:
+            _y = np.zeros(self.largest_digit + 2)
+            if y > self.largest_digit:
+                _y[-1] = 1.0
+            else:
+                _y[int(y)] = 1.0
+            y = _y
+        else:
+            y = np.minimum(y, self.largest_digit+1)
+
         return images, y
 
 
-def test(
-        path, reductions, sub_image_shape=(28, 28), n_examples=20,
-        min_digits=1, max_digits=3, base=10, image_shape=(100, 100),
-        max_overlap=200):
-
-    dataset = MnistArithmeticDataset(
-        args.path, n_examples, reductions, min_digits=min_digits, max_digits=max_digits,
-        base=base, sub_image_shape=sub_image_shape, image_shape=image_shape, max_overlap=max_overlap)
+def test(*args, **kwargs):
+    dataset = MnistArithmeticDataset(*args, **kwargs)
 
     batch_x, batch_y = dataset.next_batch()
 
@@ -526,6 +575,16 @@ if __name__ == "__main__":
     parser.add_argument('path', type=str)
     args = parser.parse_args()
 
-    # test(args.path, reductions, sub_image_shape=(14, 14), image_shape=(100, 100), max_overlap=10)
-    test(args.path, reductions, sub_image_shape=(28, 28), image_shape=(100, 100), max_overlap=10)
-    test(args.path, sum, sub_image_shape=(28, 28), image_shape=(100, 100), max_overlap=10)
+    kwargs = dict(
+        data_path=args.path, n_examples=10, reductions=reductions, sub_image_shape=(14, 14), image_shape=(100, 100),
+        max_overlap=10, min_digits=1, max_digits=2, draw_shape=(40, 40), draw_offset=(25, 25))
+
+    test(**kwargs)
+
+    kwargs.update(reductions=sum)
+
+    test(**kwargs)
+
+    kwargs.update(draw_shape=None, draw_offset=None, reductions=reductions)
+
+    test(**kwargs)

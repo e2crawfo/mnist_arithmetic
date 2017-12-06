@@ -110,7 +110,7 @@ def load_omniglot(
 def test(path):
     np.random.seed(10)
 
-    classes = omniglot_classes(args.path)
+    classes = omniglot_classes(path)
     classes = np.random.choice(classes, 20, replace=False)
 
     x, y, _ = load_omniglot(path, classes, shape=(28, 28), show=True)
